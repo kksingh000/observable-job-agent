@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 Seniority = Literal["junior", "mid", "senior", "lead", "unknown"]
 JobSourceName = Literal["jsearch", "adzuna", "remotive", "cache"]
@@ -26,13 +26,29 @@ class Profile(BaseModel):
 
     name: str | None = None
     seniority: Seniority = "unknown"
-    primary_roles: list[str] = Field(default_factory=list)
-    skills: list[str] = Field(default_factory=list)
+    # These are typed Optional (`| None`) even though every consumer treats them
+    # as plain lists, purely so the JSON schema we hand to the LLM as a tool
+    # ("type": ["array", "null"]) accepts a `null` response. Groq enforces the
+    # tool-call schema server-side (unlike OpenAI, which just lets a mismatched
+    # response come back and fail Pydantic validation locally): when a CV has no
+    # languages, or a thin CV leaves skills/locations/roles empty, the model
+    # sometimes emits `null` instead of `[]` for that field, and a plain
+    # `list[str]` schema makes Groq reject the whole tool call with a 400
+    # ("expected array, but got null") before it ever reaches this code. The
+    # validator below immediately normalizes any `None` back to `[]`, so every
+    # field is still always a real list by the time calling code sees it.
+    primary_roles: list[str] | None = Field(default_factory=list)
+    skills: list[str] | None = Field(default_factory=list)
     years_experience: float | None = None
-    locations: list[str] = Field(default_factory=list)
-    languages: list[str] = Field(default_factory=list)
+    locations: list[str] | None = Field(default_factory=list)
+    languages: list[str] | None = Field(default_factory=list)
     remote_ok: bool = False
     raw_summary: str = ""
+
+    @field_validator("primary_roles", "skills", "locations", "languages", mode="before")
+    @classmethod
+    def _null_to_empty_list(cls, value: list[str] | None) -> list[str]:
+        return value if value is not None else []
 
 
 class JobPosting(BaseModel):
